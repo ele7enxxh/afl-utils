@@ -407,6 +407,9 @@ Use '@@' to specify crash sample input file position (see afl-fuzz usage).")
         print_warn("No samples found. Check directory settings!")
         return
 
+    os.environ["ASAN_OPTIONS"] = "abort_on_error=1:detect_leaks=0:symbolize=1:allocator_may_return_null=1"
+    os.environ["ASAN_SYMBOLIZER_PATH"] = "/usr/lib/llvm-3.8/bin/llvm-symbolizer"
+
     if args.remove_invalid:
         from afl_utils import afl_vcrash
         invalid_samples, timeout_samples = afl_vcrash.verify_samples(int(args.num_threads), sample_index.inputs(),

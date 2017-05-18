@@ -32,6 +32,7 @@ class VerifyThread(threading.Thread):
         self.out_queue = out_queue
         self.in_queue_lock = in_queue_lock
         self.out_queue_lock = out_queue_lock
+        self.backtraces = []
         self.exit = False
 
     def run(self):
@@ -45,13 +46,14 @@ class VerifyThread(threading.Thread):
                 cs_fd = open(os.path.abspath(cs))
                 try:
                     if afl_utils.afl_collect.stdin_mode(self.target_cmd):
-                        v = subprocess.call(cmd.split(), stdin=cs_fd, stderr=subprocess.DEVNULL,
+                        v = subprocess.run(cmd.split(), stdin=cs_fd, stderr=subprocess.PIPE,
                                             stdout=subprocess.DEVNULL, timeout=self.timeout_secs)
                     else:
-                        v = subprocess.call(cmd.split(), stderr=subprocess.DEVNULL,
+                        v = subprocess.run(cmd.split(), stderr=subprocess.PIPE,
                                             stdout=subprocess.DEVNULL, timeout=self.timeout_secs)
                     # check if process was terminated/stopped by signal
-                    if not os.WIFSIGNALED(v) and not os.WIFSTOPPED(v):
+                    status = abs(v.returncode)
+                    if not os.WIFSIGNALED(status) and not os.WIFSTOPPED(status):
                         self.out_queue_lock.acquire()
                         self.out_queue.put((cs, 'invalid'))
                         self.out_queue_lock.release()
@@ -59,10 +61,35 @@ class VerifyThread(threading.Thread):
                         # need extension (add uninteresting signals):
                         # following signals don't indicate hard crashes: 1
                         # os.WTERMSIG(v) ?= v & 0x7f ???
-                        if (os.WTERMSIG(v) or os.WSTOPSIG(v)) in [1]:
+                        if (os.WTERMSIG(status) or os.WSTOPSIG(status)) in [1]:
                             self.out_queue_lock.acquire()
                             self.out_queue.put((cs, 'invalid'))
                             self.out_queue_lock.release()
+                        else:
+                            backtrace = ""
+                            is_find = False
+                            for line in v.stderr.decode().split('\n'):
+                                if line.find("    #") != -1:
+                                    p = line.find("/")
+                                    if p:
+                                        backtrace += line[p:] + '\n'
+                                    else:
+                                        backtrace += line + '\n'
+                                    is_find = True
+                                else:
+                                    if is_find == True:
+                                        break;
+                            if len(backtrace) != 0:
+                                is_unqiue = True
+                                for i in range(0, len(self.backtraces)):
+                                    if backtrace == self.backtraces[0]:
+                                        self.out_queue_lock.acquire()
+                                        self.out_queue.put((cs, 'invalid'))
+                                        self.out_queue_lock.release()
+                                        is_unqiue = False
+                                        break
+                                if is_unqiue == True:
+                                    self.backtraces.append(backtrace)
                         # debug
                         # else:
                         #     if os.WIFSIGNALED(v):

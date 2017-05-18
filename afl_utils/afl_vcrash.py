@@ -126,6 +126,9 @@ particularly useful when combined with '-r' or '-f'.")
 
     args.target_cmd = build_target_cmd(args.target_cmd)
 
+    os.environ["ASAN_OPTIONS"] = "abort_on_error=1:detect_leaks=0:symbolize=1:allocator_may_return_null=1"
+    os.environ["ASAN_SYMBOLIZER_PATH"] = "/usr/lib/llvm-3.8/bin/llvm-symbolizer"
+
     invalid_samples, timeout_samples = verify_samples(int(args.num_threads), crash_samples, args.target_cmd, int(args.timeout_secs))
 
     print_warn("Found %d invalid crash samples." % len(invalid_samples))
