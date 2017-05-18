@@ -21,6 +21,79 @@ import afl_utils
 
 import threading
 
+class RunCrashesThread(threading.Thread):
+    def __init__(self, thread_id, timeout_secs, target_cmd, in_queue, in_queue_lock):
+        threading.Thread.__init__(self)
+        self.id = thread_id
+        self.timeout_secs = timeout_secs
+        self.target_cmd = target_cmd
+        self.in_queue = in_queue
+        self.in_queue_lock = in_queue_lock
+        self.exit = False
+
+    def run(self):
+        while not self.exit:
+            self.in_queue_lock.acquire()
+            if not self.in_queue.empty():
+                cs = self.in_queue.get()
+                self.in_queue_lock.release()
+
+                cmd = self.target_cmd.replace("@@", os.path.abspath(cs))
+                cs_fd = open(os.path.abspath(cs))
+                try:
+                    if afl_utils.afl_collect.stdin_mode(self.target_cmd):
+                        v = subprocess.run(cmd.split(), stdin=cs_fd, stderr=subprocess.PIPE,
+                                            stdout=subprocess.DEVNULL, timeout=self.timeout_secs)
+                    else:
+                        v = subprocess.run(cmd.split(), stderr=subprocess.PIPE,
+                                            stdout=subprocess.DEVNULL, timeout=self.timeout_secs)
+                    # check if process was terminated/stopped by signal
+                    status = abs(v.returncode)
+                    if not os.WIFSIGNALED(status) and not os.WIFSTOPPED(status):
+                        self.out_queue_lock.acquire()
+                        self.out_queue.put((cs, 'invalid'))
+                        self.out_queue_lock.release()
+                    else:
+                        # need extension (add uninteresting signals):
+                        # following signals don't indicate hard crashes: 1
+                        # os.WTERMSIG(v) ?= v & 0x7f ???
+                        if (os.WTERMSIG(status) or os.WSTOPSIG(status)) in [1]:
+                            self.out_queue_lock.acquire()
+                            self.out_queue.put((cs, 'invalid'))
+                            self.out_queue_lock.release()
+                        else:
+                            backtrace = ""
+                            for line in v.stderr.decode().split('\n'):
+                                if line.find("SUMMARY: AddressSanitizer:") != -1:
+                                    backtrace = line + '\n'
+                                    break
+                            if len(backtrace) != 0:
+                                is_unqiue = True
+                                for i in range(0, len(self.backtraces)):
+                                    if backtrace == self.backtraces[0]:
+                                        self.out_queue_lock.acquire()
+                                        self.out_queue.put((cs, 'invalid'))
+                                        self.out_queue_lock.release()
+                                        is_unqiue = False
+                                        break
+                                if is_unqiue == True:
+                                    self.backtraces.append(backtrace)
+                        # debug
+                        # else:
+                        #     if os.WIFSIGNALED(v):
+                        #         print("%s: sig: %d (%d)" % (cs, os.WTERMSIG(v), v))
+                        #     elif os.WIFSTOPPED(v):
+                        #         print("%s: sig: %d (%d)" % (cs, os.WSTOPSIG(v), v))
+                except subprocess.TimeoutExpired:
+                    self.out_queue_lock.acquire()
+                    self.out_queue.put((cs, 'timeout'))
+                    self.out_queue_lock.release()
+                except Exception:
+                    pass
+                cs_fd.close()   
+            else:
+                self.in_queue_lock.release()
+                self.exit = True
 
 class VerifyThread(threading.Thread):
     def __init__(self, thread_id, timeout_secs, target_cmd, in_queue, out_queue, in_queue_lock, out_queue_lock):
