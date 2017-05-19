@@ -21,14 +21,17 @@ import afl_utils
 
 import threading
 
-class RunCrashesThread(threading.Thread):
-    def __init__(self, thread_id, timeout_secs, target_cmd, in_queue, in_queue_lock):
+class RunThread(threading.Thread):
+    def __init__(self, thread_id, timeout_secs, target_cmd, in_queue, out_queue, in_queue_lock, out_queue_lock):
         threading.Thread.__init__(self)
         self.id = thread_id
         self.timeout_secs = timeout_secs
         self.target_cmd = target_cmd
         self.in_queue = in_queue
+        self.out_queue = out_queue
         self.in_queue_lock = in_queue_lock
+        self.out_queue_lock = out_queue_lock
+        self.backtraces = []
         self.exit = False
 
     def run(self):
@@ -66,17 +69,20 @@ class RunCrashesThread(threading.Thread):
                             for line in v.stderr.decode().split('\n'):
                                 if line.find("SUMMARY: AddressSanitizer:") != -1:
                                     backtrace = line + '\n'
+                                    # print(backtrace)
                                     break
                             if len(backtrace) != 0:
                                 is_unqiue = True
                                 for i in range(0, len(self.backtraces)):
-                                    if backtrace == self.backtraces[0]:
+                                    if backtrace == self.backtraces[i]:
                                         self.out_queue_lock.acquire()
                                         self.out_queue.put((cs, 'invalid'))
                                         self.out_queue_lock.release()
                                         is_unqiue = False
                                         break
                                 if is_unqiue == True:
+                                    print(cmd)
+                                    print(backtrace)
                                     self.backtraces.append(backtrace)
                         # debug
                         # else:
@@ -88,8 +94,9 @@ class RunCrashesThread(threading.Thread):
                     self.out_queue_lock.acquire()
                     self.out_queue.put((cs, 'timeout'))
                     self.out_queue_lock.release()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # pass
+                    print(e)
                 cs_fd.close()   
             else:
                 self.in_queue_lock.release()
@@ -155,7 +162,7 @@ class VerifyThread(threading.Thread):
                             if len(backtrace) != 0:
                                 is_unqiue = True
                                 for i in range(0, len(self.backtraces)):
-                                    if backtrace == self.backtraces[0]:
+                                    if backtrace == self.backtraces[i]:
                                         self.out_queue_lock.acquire()
                                         self.out_queue.put((cs, 'invalid'))
                                         self.out_queue_lock.release()

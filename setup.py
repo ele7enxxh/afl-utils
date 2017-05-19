@@ -37,7 +37,8 @@ afl_scripts = [
     'afl-multikill',
     'afl-stats',
     'afl-sync',
-    'afl-vcrash'
+    'afl-vcrash',
+    'afl-rcrash'
 ]
 
 setup(
